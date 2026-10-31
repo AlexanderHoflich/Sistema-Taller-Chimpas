@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "taller-moto"
+version = "0.1.0"
+description = "Sistema local de gestion para un taller de motocicletas"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "PySide6>=6.6,<7",
+]
+
+[project.scripts]
+taller-moto = "taller_moto.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
