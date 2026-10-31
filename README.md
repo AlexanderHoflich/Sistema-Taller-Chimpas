@@ -39,7 +39,7 @@ taller-moto
 - Guarda ordenes transcritas desde el registro fisico, con kilometraje, motivo, diagnostico, trabajo realizado y estado.
 - Permite cambiar el estado de una orden y consultar el historial en la lista de ordenes.
 
-Los datos se guardan localmente en SQLite y las fotos se copian al directorio de datos de la aplicacion. No se guardan fotos de las reparaciones. La facturacion no esta habilitada en esta version.
+Por ahora, los datos se guardan localmente en SQLite y las fotos se copian al directorio de datos de la aplicacion. La interfaz depende de un contrato de servicio y no de SQLite directamente; la implementacion local adapta la base de datos a ese contrato. Esto prepara el punto de extension para conectar un cliente de API al futuro servidor LAN. El servidor, la API, las cuentas de usuario y los permisos aun no estan implementados, por lo que esta version sigue siendo de un solo equipo y no debe usarse con datos sensibles en un entorno compartido. No se guardan fotos de las reparaciones. La facturacion no esta habilitada en esta version.
 
 La base de datos no debe compartirse como archivo entre varias computadoras. Para el futuro acceso por LAN, los equipos deberan conectarse a un servicio central; la aplicacion mantiene la persistencia separada de la interfaz para facilitar esa evolucion.
 

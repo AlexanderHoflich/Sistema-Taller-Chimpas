@@ -4,7 +4,7 @@ import sys
 import sqlite3
 from pathlib import Path
 
-from PySide6.QtCore import QDate, QStandardPaths, QUrl
+from PySide6.QtCore import QDate, QStandardPaths, Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QImageReader
 from PySide6.QtWidgets import (
     QApplication,
@@ -28,7 +28,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from taller_moto.contracts import (
+    CustomerRecord,
+    MotorcycleRecord,
+    WorkshopService,
+    WorkshopServiceError,
+)
 from taller_moto.database import ORDER_STATUSES, WorkshopDatabase
+from taller_moto.services import LocalWorkshopService
 
 
 def _show_error(parent: QWidget, error: Exception) -> None:
@@ -64,7 +71,9 @@ class CustomerDialog(QDialog):
 
 
 class MotorcycleDialog(QDialog):
-    def __init__(self, customers: list, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, customers: list[CustomerRecord], parent: QWidget | None = None
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Registrar motocicleta")
         self.photo_path: Path | None = None
@@ -133,7 +142,9 @@ class MotorcycleDialog(QDialog):
 
 
 class WorkOrderDialog(QDialog):
-    def __init__(self, motorcycles: list, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, motorcycles: list[MotorcycleRecord], parent: QWidget | None = None
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Registrar orden de trabajo")
         self.motorcycle_input = QComboBox()
@@ -186,9 +197,9 @@ class WorkOrderDialog(QDialog):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, database: WorkshopDatabase) -> None:
+    def __init__(self, service: WorkshopService) -> None:
         super().__init__()
-        self.database = database
+        self.service = service
         self.setWindowTitle("Taller Moto")
         self.resize(1100, 700)
         self.tabs = QTabWidget()
@@ -228,7 +239,7 @@ class MainWindow(QMainWindow):
         table.horizontalHeader().setStretchLastSection(True)
         return table
 
-    def _tab(self, table: QTableWidget, *buttons: QPushButton) -> QWidget:
+    def _tab(self, table: QTableWidget, *buttons: QWidget) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
         actions = QHBoxLayout()
@@ -266,7 +277,14 @@ class MainWindow(QMainWindow):
         )
 
     def refresh(self) -> None:
-        customers = self.database.list_customers()
+        try:
+            customers = self.service.list_customers()
+            motorcycles = self.service.list_motorcycles()
+            orders = self.service.list_work_orders()
+        except WorkshopServiceError as error:
+            _show_error(self, error)
+            return
+
         self.customer_table.setRowCount(len(customers))
         for row_index, customer in enumerate(customers):
             self._set_row(
@@ -280,7 +298,6 @@ class MainWindow(QMainWindow):
                 ],
             )
 
-        motorcycles = self.database.list_motorcycles()
         self.motorcycle_table.setRowCount(len(motorcycles))
         for row_index, motorcycle in enumerate(motorcycles):
             self._set_row(
@@ -296,11 +313,10 @@ class MainWindow(QMainWindow):
                     Path(motorcycle["photo_path"]).name,
                 ],
             )
-            self.motorcycle_table.item(row_index, 0).setData(
-                256, motorcycle["photo_path"]
-            )
+            item = self.motorcycle_table.item(row_index, 0)
+            if item is not None:
+                item.setData(Qt.ItemDataRole.UserRole, motorcycle["id"])
 
-        orders = self.database.list_work_orders()
         self.order_table.setRowCount(len(orders))
         for row_index, order in enumerate(orders):
             self._set_row(
@@ -317,7 +333,9 @@ class MainWindow(QMainWindow):
                     order["work_done"],
                 ],
             )
-            self.order_table.item(row_index, 0).setData(256, order["id"])
+            item = self.order_table.item(row_index, 0)
+            if item is not None:
+                item.setData(Qt.ItemDataRole.UserRole, order["id"])
 
     @staticmethod
     def _set_row(table: QTableWidget, row: int, values: list[str]) -> None:
@@ -329,19 +347,23 @@ class MainWindow(QMainWindow):
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         try:
-            self.database.add_customer(
+            self.service.add_customer(
                 dialog.name_input.text(),
                 dialog.phone_input.text(),
                 dialog.email_input.text(),
                 dialog.address_input.text(),
             )
-        except (ValueError, sqlite3.Error) as error:
+        except (OSError, ValueError, WorkshopServiceError) as error:
             _show_error(self, error)
             return
         self.refresh()
 
     def _add_motorcycle(self) -> None:
-        customers = self.database.list_customers()
+        try:
+            customers = self.service.list_customers()
+        except WorkshopServiceError as error:
+            _show_error(self, error)
+            return
         if not customers:
             QMessageBox.information(
                 self, "Primero registra un cliente", "Debes registrar un cliente antes."
@@ -357,7 +379,7 @@ class MainWindow(QMainWindow):
             return
         try:
             displacement = dialog.displacement_input.value() or None
-            self.database.add_motorcycle(
+            self.service.add_motorcycle(
                 int(dialog.customer_input.currentData()),
                 dialog.plate_input.text(),
                 dialog.make_input.text(),
@@ -369,13 +391,17 @@ class MainWindow(QMainWindow):
                 dialog.vin_input.text(),
                 dialog.engine_input.text(),
             )
-        except (OSError, ValueError, sqlite3.Error) as error:
+        except (OSError, ValueError, WorkshopServiceError) as error:
             _show_error(self, error)
             return
         self.refresh()
 
     def _add_work_order(self) -> None:
-        motorcycles = self.database.list_motorcycles()
+        try:
+            motorcycles = self.service.list_motorcycles()
+        except WorkshopServiceError as error:
+            _show_error(self, error)
+            return
         if not motorcycles:
             QMessageBox.information(
                 self,
@@ -387,7 +413,7 @@ class MainWindow(QMainWindow):
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         try:
-            self.database.add_work_order(
+            self.service.add_work_order(
                 int(dialog.motorcycle_input.currentData()),
                 dialog.date_input.date().toString("yyyy-MM-dd"),
                 dialog.mileage_input.value(),
@@ -397,7 +423,7 @@ class MainWindow(QMainWindow):
                 dialog.work_input.toPlainText(),
                 dialog.notes_input.toPlainText(),
             )
-        except (ValueError, sqlite3.Error) as error:
+        except (ValueError, WorkshopServiceError) as error:
             _show_error(self, error)
             return
         self.refresh()
@@ -409,12 +435,19 @@ class MainWindow(QMainWindow):
                 self, "Selecciona una orden", "Selecciona una orden de trabajo primero."
             )
             return
-        order_id = self.order_table.item(selected[0].row(), 0).data(256)
+        order_item = self.order_table.item(selected[0].row(), 0)
+        if order_item is None:
+            QMessageBox.warning(self, "Orden no valida", "No se encontro la orden.")
+            return
+        order_id = order_item.data(Qt.ItemDataRole.UserRole)
+        if order_id is None:
+            QMessageBox.warning(self, "Orden no valida", "No se encontro el identificador.")
+            return
         try:
-            self.database.update_work_order_status(
+            self.service.update_work_order_status(
                 int(order_id), self.status_input.currentText()
             )
-        except (ValueError, sqlite3.Error) as error:
+        except (ValueError, WorkshopServiceError) as error:
             _show_error(self, error)
             return
         self.refresh()
@@ -422,8 +455,9 @@ class MainWindow(QMainWindow):
     def _select_order_status(self) -> None:
         selected = self.order_table.selectionModel().selectedRows()
         if selected:
-            status = self.order_table.item(selected[0].row(), 3).text()
-            self.status_input.setCurrentText(status)
+            item = self.order_table.item(selected[0].row(), 3)
+            if item is not None:
+                self.status_input.setCurrentText(item.text())
 
     def _open_selected_photo(self) -> None:
         selected = self.motorcycle_table.selectionModel().selectedRows()
@@ -432,11 +466,24 @@ class MainWindow(QMainWindow):
                 self, "Selecciona una motocicleta", "Selecciona una motocicleta primero."
             )
             return
-        photo_path = self.motorcycle_table.item(selected[0].row(), 0).data(256)
-        if not Path(photo_path).is_file():
-            QMessageBox.warning(self, "Foto no encontrada", f"No existe el archivo: {photo_path}")
+        motorcycle_item = self.motorcycle_table.item(selected[0].row(), 0)
+        if motorcycle_item is None:
+            QMessageBox.warning(
+                self, "Motocicleta no valida", "No se encontro la motocicleta."
+            )
             return
-        if not QDesktopServices.openUrl(QUrl.fromLocalFile(photo_path)):
+        motorcycle_id = motorcycle_item.data(Qt.ItemDataRole.UserRole)
+        if motorcycle_id is None:
+            QMessageBox.warning(
+                self, "Motocicleta no valida", "No se encontro el identificador."
+            )
+            return
+        try:
+            photo_path = self.service.get_motorcycle_photo(int(motorcycle_id))
+        except WorkshopServiceError as error:
+            _show_error(self, error)
+            return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(photo_path))):
             QMessageBox.warning(self, "No se pudo abrir", "El sistema no pudo abrir la foto.")
 
 def main() -> None:
@@ -447,9 +494,10 @@ def main() -> None:
     )
     try:
         database = WorkshopDatabase(data_directory / "taller_moto.sqlite3")
-    except (OSError, RuntimeError) as error:
+        service = LocalWorkshopService(database)
+    except (OSError, RuntimeError, sqlite3.Error) as error:
         QMessageBox.critical(None, "No se pudo iniciar Taller Moto", str(error))
         raise
-    window = MainWindow(database)
+    window = MainWindow(service)
     window.show()
     sys.exit(app.exec())
